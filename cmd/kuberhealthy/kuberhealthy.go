@@ -68,6 +68,7 @@ type Kuberhealthy struct {
 	MetricForwarder    metrics.Client
 	overrideKubeClient *kubernetes.Clientset
 	cancelChecksFunc   context.CancelFunc // invalidates the context of all running checks
+	cancelReaperFunc   context.CancelFunc // invalidates the context of the reaper
 	wg                 sync.WaitGroup     // used to track running checks
 	shutdownCtxFunc    context.CancelFunc // used to shutdown the main control select
 	stateReflector     *StateReflector    // a reflector that can cache the current state of the khState resources
@@ -82,11 +83,11 @@ func NewKuberhealthy() *Kuberhealthy {
 
 // setCheckExecutionError sets an execution error for a check name in
 // its crd status
-func (k *Kuberhealthy) setCheckExecutionError(checkName string, checkNamespace string, exErr error) {
+func (k *Kuberhealthy) setCheckExecutionError(checkName string, checkNamespace string, exErr error) error {
 	details := health.NewWorkloadDetails(health.KHCheck)
 	check, err := k.getCheck(checkName, checkNamespace)
 	if err != nil {
-		log.Errorln(err)
+		return err
 	}
 	if check != nil {
 		details.Namespace = check.CheckNamespace()
@@ -97,29 +98,30 @@ func (k *Kuberhealthy) setCheckExecutionError(checkName string, checkNamespace s
 	// we need to maintain the current UUID, which means fetching it first
 	khc, err := k.getCheck(checkName, checkNamespace)
 	if err != nil {
-		log.Errorln("Error when setting execution error on check", checkName, checkNamespace, err)
+		return fmt.Errorf("Error when setting execution error on check %s %s %w", checkName, checkNamespace, err)
 	}
+
 	checkState, err := getCheckState(khc)
 	if err != nil {
-		log.Errorln("Error when setting execution error on check (getting check state for current UUID)", checkName, checkNamespace, err)
+		return fmt.Errorf("Error when setting execution error on check (getting check state for current UUID) %s %s %w", checkName, checkNamespace, err)
 	}
 	details.CurrentUUID = checkState.CurrentUUID
-
 	log.Debugln("Setting execution state of check", checkName, "to", details.OK, details.Errors, details.CurrentUUID, details.GetKHWorkload())
 
 	// store the check state with the CRD
 	err = k.storeCheckState(checkName, checkNamespace, details)
 	if err != nil {
-		log.Errorln("Was unable to write an execution error to the CRD status with error:", err)
+		return fmt.Errorf("Was unable to write an execution error to the CRD status with error: %w", err)
 	}
+	return nil
 }
 
 // setJobExecutionError sets an execution error for a job name in its crd status
-func (k *Kuberhealthy) setJobExecutionError(jobName string, jobNamespace string, exErr error) {
+func (k *Kuberhealthy) setJobExecutionError(jobName string, jobNamespace string, exErr error) error {
 	details := health.NewWorkloadDetails(health.KHJob)
 	job, err := k.getJob(jobName, jobNamespace)
 	if err != nil {
-		log.Errorln(err)
+		return err
 	}
 	if job != nil {
 		details.Namespace = job.CheckNamespace()
@@ -130,11 +132,11 @@ func (k *Kuberhealthy) setJobExecutionError(jobName string, jobNamespace string,
 	// we need to maintain the current UUID, which means fetching it first
 	khj, err := k.getJob(jobName, jobNamespace)
 	if err != nil {
-		log.Errorln("Error when setting execution error on job", jobName, jobNamespace, err)
+		return fmt.Errorf("Error when setting execution error on job %s %s %w", jobName, jobNamespace, err)
 	}
 	jobState, err := getJobState(khj)
 	if err != nil {
-		log.Errorln("Error when setting execution error on job (getting job state for current UUID)", jobName, jobNamespace, err)
+		return fmt.Errorf("Error when setting execution error on job (getting job state for current UUID) %s %s %w", jobName, jobNamespace, err)
 	}
 	details.CurrentUUID = jobState.CurrentUUID
 
@@ -143,8 +145,9 @@ func (k *Kuberhealthy) setJobExecutionError(jobName string, jobNamespace string,
 	// store the check state with the CRD
 	err = k.storeCheckState(jobName, jobNamespace, details)
 	if err != nil {
-		log.Errorln("Was unable to write an execution error to the CRD status with error:", err)
+		return fmt.Errorf("Was unable to write an execution error to the CRD status with error: %w", err)
 	}
+	return nil
 }
 
 // AddCheck adds a check to Kuberhealthy.  Must be done before Start or StartChecks
@@ -235,26 +238,49 @@ func (k *Kuberhealthy) Start(ctx context.Context) {
 		case <-becameMasterChan: // we have become the current master instance and should run checks
 			// reset checks and re-add from configuration settings
 			log.Infoln("control: Became master. Reconfiguring and starting checks.")
-			k.StartChecks()
+			k.StartChecks(ctx)
+			k.StartReaper(ctx)
 		case <-lostMasterChan: // we are no longer master
 			log.Infoln("control: Lost master. Stopping checks.")
 			k.StopChecks()
+			k.StopReaper()
 		case <-externalChecksUpdateChanLimited: // external check change detected
 			log.Infoln("control: Witnessed a khcheck resource change...")
 
 			// if we are master, stop, reconfigure our khchecks, and start again with the new configuration
 			if isMaster {
 				log.Infoln("control: Reloading external check configurations due to khcheck update")
-				k.RestartChecks()
+				k.RestartChecks(ctx)
+				k.RestartReaper(ctx)
 			}
 		}
 	}
 }
 
+// StartReaper starts the check reaper
+func (k *Kuberhealthy) StartReaper(ctx context.Context) {
+	reaperCtx, reaperCtxCancel := context.WithCancel(ctx)
+	k.cancelReaperFunc = reaperCtxCancel
+	go reaper(reaperCtx)
+}
+
+// StopReaper stops the check reaper
+func (k *Kuberhealthy) StopReaper() {
+	if k.cancelReaperFunc != nil {
+		k.cancelReaperFunc()
+	}
+}
+
+// RestartReaper resrtarts the check reaper
+func (k *Kuberhealthy) RestartReaper(ctx context.Context) {
+	k.StopReaper()
+	k.StartReaper(ctx)
+}
+
 // RestartChecks does a stop and start on all kuberhealthy checks
-func (k *Kuberhealthy) RestartChecks() {
+func (k *Kuberhealthy) RestartChecks(ctx context.Context) {
 	k.StopChecks()
-	k.StartChecks()
+	k.StartChecks(ctx)
 }
 
 // khStateResourceReaper runs reapKHStateResources on an interval until the context for it is canceled
@@ -726,7 +752,7 @@ func (k *Kuberhealthy) triggerKHJob(ctx context.Context, job khjob.KuberhealthyJ
 }
 
 // StartChecks starts all checks concurrently and ensures they stay running
-func (k *Kuberhealthy) StartChecks() {
+func (k *Kuberhealthy) StartChecks(ctx context.Context) {
 	// wait for all check wg to be done, just in case
 	k.wg.Wait()
 
@@ -737,14 +763,14 @@ func (k *Kuberhealthy) StartChecks() {
 	log.Infoln("control:", len(k.Checks), "checks starting!")
 
 	// create a context for checks to abort with
-	ctx, cancelFunc := context.WithCancel(context.Background())
+	checkGroupCtx, cancelFunc := context.WithCancel(ctx)
 	k.cancelChecksFunc = cancelFunc
 
 	// start each check with this check group's context
 	for _, c := range k.Checks {
 		k.wg.Add(1)
 		// start the check in its own routine
-		go k.runCheck(ctx, c)
+		go k.runCheck(checkGroupCtx, c)
 	}
 
 	// spin up the khState reaper with a context after checks have been configured and started
@@ -883,14 +909,17 @@ func (k *Kuberhealthy) runJob(ctx context.Context, job khjob.KuberhealthyJob) {
 		log.Errorln("Error setting job phase:", err)
 	}
 
-	err = j.Run(kubernetesClient)
+	err = j.Run(ctx, kubernetesClient)
 	if err != nil {
 		log.Errorln("Error running job:", j.Name(), "in namespace", j.CheckNamespace()+":", err)
 		if strings.Contains(err.Error(), "pod deleted expectedly") {
 			log.Infoln("Skipping this job due to expected pod removal before completion")
 		}
 		// set any job run errors in the CRD
-		k.setJobExecutionError(j.Name(), j.CheckNamespace(), err)
+		err = k.setJobExecutionError(j.Name(), j.CheckNamespace(), err)
+		if err != nil {
+			log.Errorln("Error setting job execution error:", err)
+		}
 		// exit out of this runJob
 		return
 	}
@@ -982,7 +1011,7 @@ func (k *Kuberhealthy) runCheck(ctx context.Context, c KuberhealthyCheck) {
 		log.Infoln("Running check:", c.Name())
 		// Record check run start time
 		checkStartTime := time.Now()
-		err := c.Run(kubernetesClient)
+		err := c.Run(ctx, kubernetesClient)
 		if err != nil {
 			log.Errorln("Error running check:", c.Name(), "in namespace", c.CheckNamespace()+":", err)
 			if strings.Contains(err.Error(), "pod deleted expectedly") {
@@ -990,7 +1019,10 @@ func (k *Kuberhealthy) runCheck(ctx context.Context, c KuberhealthyCheck) {
 				<-ticker.C
 			}
 			// set any check run errors in the CRD
-			k.setCheckExecutionError(c.Name(), c.CheckNamespace(), err)
+			err = k.setCheckExecutionError(c.Name(), c.CheckNamespace(), err)
+			if err != nil {
+				log.Errorln("Error setting check execution error:", err)
+			}
 			<-ticker.C
 			continue
 		}
@@ -1533,8 +1565,7 @@ func (k *Kuberhealthy) getJob(name string, namespace string) (KuberhealthyCheck,
 		return kjob, err
 	}
 
-	kjob = k.configureJob(j)
-	return kjob, fmt.Errorf("could not find Kuberhealthy job with name %s", name)
+	return k.configureJob(j), nil
 }
 
 // configureChecks removes all checks set in Kuberhealthy and reloads them

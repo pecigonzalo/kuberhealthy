@@ -2,6 +2,10 @@
 # This is a YAML-formatted file.
 # Declare variables to be passed into your templates.
 
+checkReaper:
+  jobCleanupDuration: 15m # the maximum age of khjobs before being reaped
+  maxCheckPods: 4 # the maximum number of check pods in Completed state before being reaped
+
 prometheus:
   enabled: false
   name: "prometheus"
@@ -11,11 +15,11 @@ prometheus:
     endpoints:
       interval: 15s
       bearerTokenFile: /var/run/secrets/kubernetes.io/serviceaccount/token
-      
   enableAlerting: false
 
 image:
-  repository: kuberhealthy/kuberhealthy
+  registry: kuberhealthy
+  repository: kuberhealthy
   tag: latest
 
 resources:
@@ -66,8 +70,9 @@ check:
     runInterval: 20m
     timeout: 12m
     image:
-      repository: kuberhealthy/daemonset-check
-      tag: v3.2.1
+      registry: kuberhealthy
+      repository: daemonset-check
+      tag: v3.2.5
     extraEnvs:
     nodeSelector: {}
   deployment:
@@ -75,8 +80,9 @@ check:
     runInterval: 20m
     timeout: 15m
     image:
-      repository: kuberhealthy/deployment-check
-      tag: v1.7.0
+      registry: kuberhealthy
+      repository: deployment-check
+      tag: v1.8.1
     extraEnvs:
       CHECK_DEPLOYMENT_REPLICAS: "4"
       CHECK_DEPLOYMENT_ROLLING_UPDATE: "true"
@@ -87,8 +93,9 @@ check:
     runInterval: 20m
     timeout: 15m
     image:
-      repository: kuberhealthy/dns-resolution-check
-      tag: v1.4.1
+      registry: kuberhealthy
+      repository: dns-resolution-check
+      tag: v1.4.3
     extraEnvs:
       HOSTNAME: "kubernetes.default"
     nodeSelector: {}
@@ -97,8 +104,9 @@ check:
     runInterval: 20m
     timeout: 10m
     image:
-      repository: kuberhealthy/pod-restarts-check
-      tag: v2.3.1
+      registry: kuberhealthy
+      repository: pod-restarts-check
+      tag: v2.3.2
     extraEnvs:
       MAX_FAILURES_ALLOWED: "10"
     nodeSelector: {}
@@ -107,15 +115,10 @@ check:
     runInterval: 20m
     timeout: 15m
     image:
-      repository: kuberhealthy/pod-status-check
-      tag: v1.2.3
+      registry: kuberhealthy
+      repository: pod-status-check
+      tag: v1.2.4
     extraEnvs:
     nodeSelector: {}
 
-checkReaper:
-  enabled: false
-  image:
-    repository: kuberhealthy/check-reaper
-    tag: v1.5.1
-  nodeSelector: {}
   

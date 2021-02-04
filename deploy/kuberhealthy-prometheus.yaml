@@ -43,6 +43,19 @@ spec:
     kind: KuberhealthyState
     shortNames:
       - khs
+  additionalPrinterColumns:
+    - description: OK status
+      JSONPath: .spec.OK
+      name: OK
+      type: string
+    - description: Last Run
+      JSONPath: .spec.LastRun
+      name: Age LastRun
+      type: date
+    - description: Age
+      JSONPath: .metadata.creationTimestamp
+      name: Age
+      type: date
 ---
 # Source: kuberhealthy/templates/poddisruptionbudget.yaml
 apiVersion: policy/v1beta1
@@ -71,13 +84,8 @@ data:
     influxURL: "" # Address for the InfluxDB instance
     influxDB: "http://localhost:8086" # Name of the InfluxDB database
     enableInflux: false # Set to true to enable metric forwarding to Infux DB
----
-# Source: kuberhealthy/templates/check-reaper.yaml
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: check-reaper
-  namespace: kuberhealthy
+    jobCleanupDuration: 15m
+    maxCheckPods: 4
 ---
 # Source: kuberhealthy/templates/khcheck-daemonset.yaml
 apiVersion: v1
@@ -99,47 +107,6 @@ kind: ServiceAccount
 metadata:
   name: kuberhealthy
   namespace: kuberhealthy
----
-# Source: kuberhealthy/templates/clusterrole.yaml
-apiVersion: "rbac.authorization.k8s.io/v1"
-kind: ClusterRole
-metadata:
-  name: kuberhealthy-daemonset-khcheck
-rules:
-- apiGroups:
-  - ""
-  resources:
-  - nodes
-  verbs:
-  - list
----
-# Source: kuberhealthy/templates/clusterrole.yaml
-apiVersion: "rbac.authorization.k8s.io/v1"
-kind: ClusterRole
-metadata:
-  name: kuberhealthy-check-reaper
-rules:
-  - apiGroups:
-      - ""
-    resources:
-      - namespaces
-    verbs:
-      - list
-  - apiGroups:
-      - ""
-    resources:
-      - pods
-    verbs:
-      - delete
-      - list
-  - apiGroups:
-      - comcast.github.io
-    resources:
-      - khchecks
-      - khjobs
-    verbs:
-      - delete
-      - list
 ---
 # Source: kuberhealthy/templates/clusterrole.yaml
 apiVersion: "rbac.authorization.k8s.io/v1"
@@ -211,20 +178,32 @@ rules:
     verbs:
     - create
 ---
-# Source: kuberhealthy/templates/check-reaper.yaml
-apiVersion: rbac.authorization.k8s.io/v1beta1
+# Source: kuberhealthy/templates/clusterrole.yaml
+apiVersion: "rbac.authorization.k8s.io/v1"
+kind: ClusterRole
+metadata:
+  name: kuberhealthy-daemonset-khcheck
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - nodes
+  verbs:
+  - list
+---
+# Source: kuberhealthy/templates/clusterrolebinding.yaml
+apiVersion: "rbac.authorization.k8s.io/v1"
 kind: ClusterRoleBinding
 metadata:
-  name: check-reaper
-  namespace: kuberhealthy
+  name: kuberhealthy
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: ClusterRole
-  name: kuberhealthy-check-reaper
+  name: kuberhealthy
 subjects:
-  - kind: ServiceAccount
-    name: check-reaper
-    namespace: kuberhealthy
+- kind: ServiceAccount
+  name: kuberhealthy
+  namespace: kuberhealthy
 ---
 # Source: kuberhealthy/templates/clusterrolebinding.yaml
 apiVersion: "rbac.authorization.k8s.io/v1"
@@ -238,20 +217,6 @@ roleRef:
 subjects:
 - kind: ServiceAccount
   name: daemonset-khcheck
-  namespace: kuberhealthy
----
-# Source: kuberhealthy/templates/clusterrolebinding.yaml
-apiVersion: "rbac.authorization.k8s.io/v1"
-kind: ClusterRoleBinding
-metadata:
-  name: kuberhealthy
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
-  name: kuberhealthy
-subjects:
-- kind: ServiceAccount
-  name: kuberhealthy
   namespace: kuberhealthy
 ---
 # Source: kuberhealthy/templates/khcheck-daemonset.yaml
@@ -448,41 +413,6 @@ spec:
       restartPolicy: Always
       terminationGracePeriodSeconds: 60
 ---
-# Source: kuberhealthy/templates/check-reaper.yaml
-apiVersion: batch/v1beta1
-kind: CronJob
-metadata:
-  name: check-reaper
-  namespace: kuberhealthy
-spec:
-  schedule: "*/3 * * * *"
-  jobTemplate:
-    spec:
-      template:
-        spec:
-          containers:
-            - name: check-reaper
-              image: kuberhealthy/check-reaper:v1.5.1
-              imagePullPolicy: IfNotPresent
-              resources:
-                requests:
-                  cpu: 10m
-                  memory: 50Mi
-              env:
-                - name: SINGLE_NAMESPACE
-                  value: ""
-                - name: MAX_PODS_THRESHOLD
-                  value: "4"
-                - name: JOB_DELETE_TIME_DURATION
-                  value: 15m
-              securityContext:
-                runAsNonRoot: true
-                runAsUser: 999
-                allowPrivilegeEscalation: false
-          restartPolicy: OnFailure
-          serviceAccountName: check-reaper
-  concurrencyPolicy: Forbid
----
 # Source: kuberhealthy/templates/khcheck-daemonset.yaml
 apiVersion: comcast.github.io/v1
 kind: KuberhealthyCheck
@@ -504,7 +434,7 @@ spec:
                 fieldPath: metadata.namespace
           - name: CHECK_POD_TIMEOUT
             value: "10m"
-        image: kuberhealthy/daemonset-check:v3.2.3
+        image: kuberhealthy/daemonset-check:v3.2.5
         imagePullPolicy: IfNotPresent
         name: main
         resources:
@@ -531,7 +461,7 @@ spec:
       fsGroup: 999
     containers:
     - name: deployment
-      image: kuberhealthy/deployment-check:v1.7.1
+      image: kuberhealthy/deployment-check:v1.8.1
       imagePullPolicy: IfNotPresent
       env:
         - name: CHECK_DEPLOYMENT_REPLICAS

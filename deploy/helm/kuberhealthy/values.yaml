@@ -2,6 +2,10 @@
 # This is a YAML-formatted file.
 # Declare variables to be passed into your templates.
 
+checkReaper:
+  jobCleanupDuration: 15m # the maximum age of khjobs before being reaped
+  maxCheckPods: 4 # the maximum number of check pods in Completed state before being reaped
+
 prometheus:
   enabled: false
   name: "prometheus"
@@ -23,8 +27,9 @@ prometheus:
 imageRegistry: {}
 
 image:
-  repository: kuberhealthy/kuberhealthy
-  tag: v2.3.2
+  registry: kuberhealthy
+  repository: kuberhealthy
+  tag: v2.4.0
 
 resources:
   requests:
@@ -98,9 +103,9 @@ check:
     runInterval: 15m
     timeout: 12m
     image:
-      registry: {}
-      repository: kuberhealthy/daemonset-check
-      tag: v3.2.3
+      registry: kuberhealthy
+      repository: daemonset-check
+      tag: v3.2.5
     extraEnvs:
     nodeSelector: {}
     tolerations:
@@ -117,9 +122,9 @@ check:
     runInterval: 10m
     timeout: 15m
     image:
-      registry: {}
-      repository: kuberhealthy/deployment-check
-      tag: v1.7.1
+      registry: kuberhealthy
+      repository: deployment-check
+      tag: v1.8.1
     extraEnvs:
       CHECK_DEPLOYMENT_REPLICAS: "4"
       CHECK_DEPLOYMENT_ROLLING_UPDATE: "true"
@@ -141,8 +146,8 @@ check:
     runInterval: 2m
     timeout: 15m
     image:
-      registry: {}
-      repository: kuberhealthy/dns-resolution-check
+      registry: kuberhealthy
+      repository: dns-resolution-check
       tag: v1.4.2
     extraEnvs:
       HOSTNAME: "kubernetes.default"
@@ -161,9 +166,9 @@ check:
     runInterval: 2m
     timeout: 15m
     image:
-      registry: {}
-      repository: kuberhealthy/dns-resolution-check
-      tag: v1.4.2
+      registry: kuberhealthy
+      repository: dns-resolution-check
+      tag: v1.4.3
     extraEnvs:
       HOSTNAME: "google.com"
     nodeSelector: {}
@@ -181,9 +186,9 @@ check:
     runInterval: 5m
     timeout: 10m
     image:
-      registry: {}
-      repository: kuberhealthy/pod-restarts-check
-      tag: v2.3.1
+      registry: kuberhealthy
+      repository: pod-restarts-check
+      tag: v2.3.2
     extraEnvs:
       MAX_FAILURES_ALLOWED: "10"
     nodeSelector: {}
@@ -201,9 +206,9 @@ check:
     runInterval: 5m
     timeout: 15m
     image:
-      registry: {}
-      repository: kuberhealthy/pod-status-check
-      tag: v1.2.3
+      registry: kuberhealthy
+      repository: pod-status-check
+      tag: v1.2.4
     allNamespaces: false
     extraEnvs:
     nodeSelector: {}
@@ -227,7 +232,8 @@ check:
     runInterval: 5m
     timeout: 10m
     image:
-      repository: chrishirsch/kuberhealthy-storage-check
+      registry: chrishirsch
+      repository: kuberhealthy-storage-check
       tag: v0.0.1
     extraEnvs:
       CHECK_STORAGE_IMAGE: bitnami/nginx:1.19
@@ -247,9 +253,9 @@ check:
     runInterval: 30m
     timeout: 10m
     image:
-      registry: {}
-      repository: kuberhealthy/network-connection-check
-      tag: v0.1.2
+      registry: kuberhealthy
+      repository: network-connection-check
+      tag: v0.1.3
     extraEnvs:
       CONNECTION_TARGET: "tcp://github.com:443"
     nodeSelector: {}
@@ -263,22 +269,3 @@ check:
         memory: 5Mi
         cpu: 10m
 
-checkReaper:
-  enabled: true # Don't disable checkReaper, this flag exist to make e2e tests easier.
-  image:
-    registry: {}
-    repository: kuberhealthy/check-reaper
-    tag: v1.5.1
-  nodeSelector: {}
-  tolerations: []
-    #- key: "key"
-    #  operator: "Equal"
-    #  value: "value"
-    #  effect: "NoSchedule"
-  # startingDeadlineSeconds:
-  maxPodsThreshold: "4"
-  jobDeleteTimeDuration: 15m
-  resources:
-    requests:
-      cpu: 10m
-      memory: 50Mi
