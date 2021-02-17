@@ -18,7 +18,7 @@ spec:
                 fieldPath: metadata.namespace
           - name: MAX_FAILURES_ALLOWED
             value: "10"
-        image: kuberhealthy/pod-restarts-check:v2.3.2
+        image: kuberhealthy/pod-restarts-check:v2.3.3
         imagePullPolicy: IfNotPresent
         name: main
         resources:
@@ -55,6 +55,13 @@ rules:
       - get
       - list
       - watch
+  - apiGroups:
+      - ""
+    resources:
+      - events
+    verbs:
+      - list
+
 ---
 # Source: kuberhealthy/templates/khcheck-pod-restarts.yaml
 apiVersion: rbac.authorization.k8s.io/v1
