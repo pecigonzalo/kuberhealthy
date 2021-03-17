@@ -18,16 +18,22 @@ metadata:
   name: http
   namespace: kuberhealthy
 spec:
-  runInterval: 2m
-  timeout: 6m
+  runInterval: 5m
+  timeout: 10m
   podSpec:
     containers:
-      - name: http
-        image: kuberhealthy/http-check:v1.4.2
+      - name: https
+        image: kuberhealthy/http-check:v1.4.3
         imagePullPolicy: IfNotPresent
         env:
           - name: CHECK_URL
-            value: "http://google.com"
+            value: "https://reqres.in/api/users"
+          - name: COUNT #### default: "0"
+            value: "5"
+          - name: SECONDS #### default: "0"
+            value: "1"
+          - name: PASSING_PERCENT #### default: "100"
+            value: "80"
         resources:
           requests:
             cpu: 15m
@@ -52,7 +58,7 @@ spec:
   podSpec:
     containers:
       - name: https
-        image: kuberhealthy/http-check:v1.4.1
+        image: kuberhealthy/http-check:v1.4.3
         imagePullPolicy: IfNotPresent
         env:
           - name: CHECK_URL
